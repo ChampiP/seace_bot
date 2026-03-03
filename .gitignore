@@ -18,7 +18,6 @@ ENV/
 !.env.example
 
 # Datos generados
-proyecto_licitaciones/data/adjudicaciones_procesadas.json
 proyecto_licitaciones/data/descargas_temporales/
 
 # Backups

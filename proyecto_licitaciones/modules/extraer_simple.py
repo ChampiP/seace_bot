@@ -7,7 +7,7 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright, Page, Download
 
 # Modulo de procesamiento de PDFs (extrae RUC / razon social)
-_base = os.path.dirname(os.path.abspath(__file__))
+_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # proyecto_licitaciones/
 if _base not in sys.path:
     sys.path.insert(0, _base)
 from modules.pdf_processor import procesar_zip_buena_pro, limpiar_carpeta_pdf
@@ -119,6 +119,23 @@ def guardar(registro: dict, json_path: str):
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def actualizar_n(nomenclatura: str, nuevo_n: str, json_path: str):
+    # Solo actualiza el campo N de un registro existente (el numero se desplaza en SEACE)
+    if not os.path.exists(json_path):
+        return
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        idx = next((i for i, r in enumerate(data)
+                    if r.get("Nomenclatura") == nomenclatura), None)
+        if idx is not None and data[idx].get("N") != nuevo_n:
+            data[idx]["N"] = nuevo_n
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        log(f"    WARN actualizar_n: {e}")
 
 
 # ── Seleccion de Obra en dropdown ─────────────────────────────────────────
@@ -237,7 +254,8 @@ def regresar(page):
 
 # ── Procesamiento de una pagina ────────────────────────────────────────────
 
-def procesar_pagina(page, hoy, descargas, results, pagina, ya_procesados, json_path):
+def procesar_pagina(page, hoy, descargas, results, pagina,
+                    ya_con_bp, skip_por_fecha, json_path):
     total = page.locator(SEL_FICHA).count()
     log(f"\n[PAG {pagina}] {total} botones de ficha")
     if total == 0:
@@ -269,8 +287,17 @@ def procesar_pagina(page, hoy, descargas, results, pagina, ya_procesados, json_p
 
         log(f"\n  [{i+1}/{total}] {nomenclatura} | {entidad[:50]}")
 
-        if nomenclatura in ya_procesados:
-            log("    SKIP (BP ya confirmada)")
+        # SKIP PERMANENTE: ya tiene BP confirmada
+        if nomenclatura in ya_con_bp:
+            # El numero N se desplaza cuando hay nuevas licitaciones -> actualizar
+            actualizar_n(nomenclatura, num, json_path)
+            log("    SKIP permanente (BP ya confirmada)")
+            continue
+
+        # SKIP TEMPORAL: la fecha de BP aun no llego
+        if nomenclatura in skip_por_fecha:
+            actualizar_n(nomenclatura, num, json_path)
+            log("    SKIP temporal (fecha BP futura, aun no toca)")
             continue
 
         # Abrir ficha del proceso
@@ -338,7 +365,8 @@ def procesar_pagina(page, hoy, descargas, results, pagina, ya_procesados, json_p
         }
         results.append(reg)
         if tiene_bp:
-            ya_procesados.add(nomenclatura)
+            ya_con_bp.add(nomenclatura)
+            skip_por_fecha.discard(nomenclatura)  # ya no es skip temporal
         guardar(reg, json_path)
         log(f"    Guardado: {nomenclatura}")
 
@@ -351,21 +379,34 @@ def procesar_pagina(page, hoy, descargas, results, pagina, ya_procesados, json_p
 
 def extraer_buenas_pro() -> list:
     hoy       = datetime.now()
-    base      = os.path.dirname(os.path.abspath(__file__))
+    base      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # proyecto_licitaciones/
     descargas = os.path.join(base, "data", "descargas_temporales")
     json_path = os.path.join(base, "data", "adjudicaciones_procesadas.json")
     os.makedirs(descargas, exist_ok=True)
 
-    # Cargar JSON existente; solo omitir nomenclaturas con BP=True confirmada
-    results, ya_procesados = [], set()
+    # Cargar JSON existente y construir conjuntos de skip
+    results = []
+    ya_con_bp      = set()   # BP confirmada -> skip permanente
+    skip_por_fecha = set()   # BP futura     -> skip temporal
     if os.path.exists(json_path):
         try:
             with open(json_path, "r", encoding="utf-8") as f:
                 results = json.load(f)
-            ya_procesados = {
-                r["Nomenclatura"] for r in results if r.get("tiene_buena_pro") is True
-            }
-            log(f"  JSON cargado: {len(results)} registros | {len(ya_procesados)} BP (skip)")
+            for r in results:
+                nom = r.get("Nomenclatura", "")
+                if r.get("tiene_buena_pro") is True:
+                    ya_con_bp.add(nom)
+                elif r.get("fecha_buena_pro"):
+                    # Skip temporal solo si la fecha BP aun no llego
+                    try:
+                        fecha_bp = datetime.strptime(r["fecha_buena_pro"], "%d/%m/%Y")
+                        if fecha_bp > hoy:
+                            skip_por_fecha.add(nom)
+                    except Exception:
+                        pass
+            log(f"  JSON cargado: {len(results)} registros | "
+                f"{len(ya_con_bp)} BP confirmadas (skip permanente) | "
+                f"{len(skip_por_fecha)} con fecha futura (skip temporal)")
         except Exception as e:
             log(f"  WARN JSON: {e}")
 
@@ -439,7 +480,8 @@ def extraer_buenas_pro() -> list:
             pagina = pagina_actual(page) or 1
             while True:
                 procesar_pagina(
-                    page, hoy, descargas, results, pagina, ya_procesados, json_path
+                    page, hoy, descargas, results, pagina,
+                    ya_con_bp, skip_por_fecha, json_path
                 )
                 # Avanzar a la siguiente pagina
                 try:

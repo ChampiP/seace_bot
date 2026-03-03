@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Entorno virtual
+.venv/
+venv/
+env/
+ENV/
+
+# Variables de entorno (no versionar claves API)
+.env
+.env.*
+!.env.example
+
+# Datos generados por el scraper
+data/adjudicaciones_procesadas.json
+data/descargas_temporales/
+
+# Backups
+*.bak
+*.backup
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

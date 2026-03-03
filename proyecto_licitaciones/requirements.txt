@@ -1,3 +1,6 @@
 # Librerías de Python
 playwright
 playwright-stealth
+pdfplumber
+google-genai
+python-dotenv
